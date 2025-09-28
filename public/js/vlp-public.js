@@ -349,7 +349,9 @@
                 action: 'vlp_unlock_video',
                 nonce: vlp_public.nonce,
                 video_id: videoId,
-                unlock_code: code
+                unlock_code: code,
+                // Include session_id so server can tie access to anonymous visitors
+                session_id: vlp_public.session_id || ''
             };
 
             $.post(vlp_public.ajax_url, data)
@@ -602,18 +604,35 @@
 
         // Auto-refresh protection status
         if (vlp_public.auto_refresh && $('.vlp-protection-form').length) {
-            setInterval(() => {
-                // Check if user has gained access through another tab
+            // Poll every 5 seconds for near real-time sync across tabs
+            const pollInterval = 5000;
+            const pollKey = setInterval(() => {
+                const form = $('.vlp-protection-form');
+                if (!form.length) {
+                    // Nothing to watch anymore
+                    clearInterval(pollKey);
+                    return;
+                }
+
+                const videoId = form.data('video-id') || 0;
+
                 $.post(vlp_public.ajax_url, {
                     action: 'vlp_check_access_status',
                     nonce: vlp_public.nonce,
-                    video_id: $('.vlp-protection-form').data('video-id')
+                    video_id: videoId,
+                    session_id: vlp_public.session_id || ''
                 }).done((response) => {
                     if (response.success && response.data.has_access) {
+                        clearInterval(pollKey);
                         location.reload();
                     }
+                }).fail((xhr) => {
+                    // If we get 403 or similar, stop polling to avoid spamming
+                    if (xhr && xhr.status && xhr.status === 403) {
+                        clearInterval(pollKey);
+                    }
                 });
-            }, 30000); // Check every 30 seconds
+            }, pollInterval);
         }
     });
 

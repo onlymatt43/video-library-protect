@@ -71,6 +71,44 @@ class VLP_Protection_Manager {
         
         add_action('wp_ajax_vlp_unlock_video', array($this, 'ajax_unlock_video'));
         add_action('wp_ajax_nopriv_vlp_unlock_video', array($this, 'ajax_unlock_video'));
+
+        // Listen for external gift code grants so we can synchronize access
+        // Other plugins (e.g. GiftCode Protect) may call do_action('giftcode_protect.code_granted', $code, $user_id, $session_id)
+        add_action('giftcode_protect.code_granted', array($this, 'on_giftcode_granted'), 10, 3);
+
+        // AJAX handler for real-time access checks
+        add_action('wp_ajax_vlp_check_access_status', array($this, 'ajax_check_access_status'));
+        add_action('wp_ajax_nopriv_vlp_check_access_status', array($this, 'ajax_check_access_status'));
+    }
+
+    /**
+     * AJAX: check access status for a given video or site-wide
+     * Returns JSON { success: true, data: { has_access: bool } }
+     */
+    public function ajax_check_access_status() {
+        // Use the same nonce as other VLP AJAX actions
+        check_ajax_referer('vlp_ajax_nonce', 'nonce');
+
+        $video_id = isset($_POST['video_id']) ? intval($_POST['video_id']) : 0;
+        $session_id = isset($_POST['session_id']) ? sanitize_text_field($_POST['session_id']) : '';
+        $user_id = get_current_user_id() ?: null;
+
+        $has_access = false;
+
+        if ($video_id) {
+            // Use the same logic as check_video_access but rely on stored grants
+            $has_access = $this->has_active_access($video_id, null, $user_id, $session_id);
+            // also validate with main check to handle site-wide protection or gift_code validation
+            if (!$has_access) {
+                $access_level = $this->check_video_access($video_id, $user_id, $session_id);
+                $has_access = ($access_level === self::ACCESS_FULL_VIDEO || $access_level === self::ACCESS_CATEGORY || $access_level === self::ACCESS_SITE_WIDE);
+            }
+        } else {
+            // Site-wide check
+            $has_access = $this->check_site_wide_access($user_id, $session_id);
+        }
+
+        wp_send_json_success(array('has_access' => (bool) $has_access));
     }
 
     /**
@@ -299,6 +337,9 @@ class VLP_Protection_Manager {
             // Store code for future use
             $this->store_user_code($gift_code, $user_id, $session_id);
 
+            // Notify other plugins (e.g. GiftCode Protect) that this code was granted via VLP
+            do_action('giftcode_protect.code_granted', strtoupper(trim($gift_code)), $user_id, $session_id);
+
             return array(
                 'success' => true,
                 'message' => __('Accès accordé à la vidéo.', 'video-library-protect'),
@@ -360,6 +401,9 @@ class VLP_Protection_Manager {
 
         if ($access_granted) {
             $this->store_user_code($gift_code, $user_id, $session_id);
+
+            // Notify other plugins that a category access has been granted via VLP
+            do_action('giftcode_protect.code_granted', strtoupper(trim($gift_code)), $user_id, $session_id);
 
             return array(
                 'success' => true,
@@ -444,6 +488,49 @@ class VLP_Protection_Manager {
             $codes = array_unique($codes);
             set_transient('vlp_session_codes_' . $session_id, $codes, DAY_IN_SECONDS);
         }
+    }
+
+    /**
+     * Handler for external gift code grants so VLP can synchronize access.
+     *
+     * @param string $gift_code The normalized code granted by external plugin
+     * @param int|null $user_id WordPress user ID or null for guests
+     * @param string|null $session_id PHP session id for anonymous visitors
+     */
+    public function on_giftcode_granted($gift_code, $user_id = null, $session_id = null) {
+        // Normalize code
+        $gift_code = strtoupper(trim($gift_code));
+        error_log("VLP_DEBUG: on_giftcode_granted called for code={$gift_code}, user_id=" . ($user_id ?: 'null') . ", session_id=" . ($session_id ?: 'null'));
+
+        // Store the code for the user/session so future checks succeed
+        $this->store_user_code($gift_code, $user_id, $session_id);
+
+        // Record sync event for admin debugging
+        $this->record_sync_event(array(
+            'type' => 'external_grant',
+            'code' => $gift_code,
+            'user_id' => $user_id,
+            'session_id' => $session_id,
+            'time' => current_time('mysql')
+        ));
+
+        // Optionally, you could grant immediate access entries for recently-viewed videos here.
+    }
+
+    /**
+     * Record a synchronization event in a transient ring buffer for admin inspection.
+     *
+     * @param array $event Associative event data
+     */
+    private function record_sync_event($event) {
+        $key = 'vlp_sync_events';
+        $events = get_transient($key) ?: array();
+
+        // Keep max 100 entries
+        array_unshift($events, $event);
+        $events = array_slice($events, 0, 100);
+
+        set_transient($key, $events, 12 * HOUR_IN_SECONDS);
     }
 
     /**

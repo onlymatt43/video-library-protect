@@ -42,6 +42,86 @@ class VLP_Admin {
     private function __construct() {
         add_action('admin_enqueue_scripts', array($this, 'enqueue_global_assets'));
         add_action('wp_ajax_vlp_get_recent_activity', array($this, 'ajax_get_recent_activity'));
+        add_action('admin_menu', array($this, 'register_admin_pages'));
+        add_action('wp_ajax_vlp_get_sync_log', array($this, 'ajax_get_sync_log'));
+    }
+
+    /**
+     * Register admin pages
+     */
+    public function register_admin_pages() {
+        add_menu_page(
+            __('VLP Sync Log', 'video-library-protect'),
+            __('VLP Sync Log', 'video-library-protect'),
+            'manage_options',
+            'vlp-sync-log',
+            array($this, 'render_sync_log_page'),
+            'dashicons-admin-generic',
+            60
+        );
+    }
+
+    /**
+     * Render the sync log admin page
+     */
+    public function render_sync_log_page() {
+        if (!current_user_can('manage_options')) {
+            wp_die(__('Permissions insuffisantes.', 'video-library-protect'));
+        }
+
+        ?>
+        <div class="wrap">
+            <h1><?php _e('VLP Synchronization Log', 'video-library-protect'); ?></h1>
+            <div id="vlp-sync-log-container">
+                <p><?php _e('Chargement...', 'video-library-protect'); ?></p>
+            </div>
+        </div>
+        <script>
+        (function(){
+            jQuery.post(ajaxurl, { action: 'vlp_get_sync_log', nonce: '<?php echo wp_create_nonce('vlp_admin_nonce'); ?>' })
+                .done(function(res){
+                    if (res.success) {
+                        jQuery('#vlp-sync-log-container').html(res.data.html);
+                    } else {
+                        jQuery('#vlp-sync-log-container').html('<div class="notice notice-error"><p>' + res.data.message + '</p></div>');
+                    }
+                });
+        })();
+        </script>
+        <?php
+    }
+
+    /**
+     * AJAX handler to return the sync log HTML
+     */
+    public function ajax_get_sync_log() {
+        check_ajax_referer('vlp_admin_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => __('Permissions insuffisantes.', 'video-library-protect')));
+        }
+
+        $events = get_transient('vlp_sync_events') ?: array();
+
+        if (empty($events)) {
+            wp_send_json_success(array('html' => $this->render_notice(__('Aucun événement de synchronisation récent.', 'video-library-protect'))));
+        }
+
+        ob_start();
+        echo '<ul class="vlp-sync-log">';
+        foreach ($events as $e) {
+            $time = esc_html($e['time'] ?? '');
+            $type = esc_html($e['type'] ?? '');
+            $code = esc_html($e['code'] ?? '');
+            $user_id = esc_html($e['user_id'] ?? '');
+            $session_id = esc_html($e['session_id'] ?? '');
+
+            echo "<li><strong>{$time}</strong> — <em>{$type}</em> code: <code>{$code}</code> user: {$user_id} session: <code>{$session_id}</code></li>";
+        }
+        echo '</ul>';
+
+        $html = ob_get_clean();
+        wp_send_json_success(array('html' => $html));
     }
 
     /**
