@@ -13,7 +13,24 @@
     // Videos Manager Class
     VLP_Admin.VideosManager = class {
         constructor() {
-            this.currentPage = 1;
+             openMediaUploader($btn) {
+            this.currentTarget = $('#' + $btn.data('target'));
+            const mediaType = $btn.data('type') || 'video'; // Default to video
+
+            // Ensure the media uploader is initialized
+            if (!this.mediaUploader) {
+                this.initMediaUploader();
+            }
+            
+            // Set the library type (image or video)
+            if (this.mediaUploader.options.library) {
+                this.mediaUploader.options.library.type = mediaType;
+            } else {
+                this.mediaUploader.options.library = { type: mediaType };
+            }
+            
+            this.mediaUploader.open();
+        },.currentPage = 1;
             this.perPage = 20;
             this.filters = {};
             
