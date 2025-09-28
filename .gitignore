@@ -1,0 +1,30 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Thumbnails
+._*
+
+# Files that might appear in the root of a volume
+.Spotlight-V100
+.Trashes
+
+# IDE settings
+.vscode/
+.idea/
+
+# Archives
+*.zip
+*.tar
+*.gz
+*.rar
+
+# Node dependencies
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Composer dependencies
+vendor/
+composer.lock
