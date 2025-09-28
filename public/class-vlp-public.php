@@ -417,19 +417,12 @@ class VLP_Public {
     private function get_video_url($slug) {
         $settings       = get_option('vlp_settings', array());
         $library_page_id = isset($settings['library_page_id']) ? intval($settings['library_page_id']) : 0;
-        
-        error_log("VLP_DEBUG: get_video_url for slug '{$slug}' - library_page_id: {$library_page_id}");
-        error_log("VLP_DEBUG: settings: " . print_r($settings, true));
 
         if ($library_page_id > 0) {
             $permalink = get_permalink($library_page_id);
-            $video_url = add_query_arg('video', $slug, $permalink);
-            error_log("VLP_DEBUG: Using library page - permalink: {$permalink}, final URL: {$video_url}");
-            return $video_url;
+            return add_query_arg('video', $slug, $permalink);
         }
 
-        $fallback_url = add_query_arg('vlp_video', $slug, home_url('/'));
-        error_log("VLP_DEBUG: No library page set, using fallback URL: {$fallback_url}");
-        return $fallback_url;
+        return add_query_arg('vlp_video', $slug, home_url('/'));
     }
 }
