@@ -934,16 +934,22 @@ class VLP_Video_Admin {
      * AJAX: Save video
      */
     public function ajax_save_video() {
+        error_log('VLP Video Admin Debug: ajax_save_video called');
+        error_log('VLP Video Admin Debug: POST data: ' . print_r($_POST, true));
+        
         check_ajax_referer('vlp_admin_nonce', 'nonce');
         
         if (!current_user_can('manage_options')) {
+            error_log('VLP Video Admin Debug: User lacks permissions');
             wp_send_json_error(array('message' => 'Insufficient permissions'));
         }
 
         // Process form data and save video
         $video_data = $this->process_video_form_data($_POST);
+        error_log('VLP Video Admin Debug: Processed video data: ' . print_r($video_data, true));
 
         if (is_wp_error($video_data)) {
+            error_log('VLP Video Admin Debug: Video data processing error: ' . $video_data->get_error_message());
             wp_send_json_error(array('message' => $video_data->get_error_message()));
         }
 

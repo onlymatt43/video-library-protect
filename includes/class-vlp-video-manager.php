@@ -88,6 +88,17 @@ class VLP_Video_Manager {
     public function create_video($video_data) {
         global $wpdb;
 
+        error_log('VLP Video Manager Debug: create_video called with data: ' . print_r($video_data, true));
+        
+        // Check if table exists before attempting to insert
+        $table_exists = $wpdb->get_var("SHOW TABLES LIKE '{$this->videos_table}'");
+        error_log('VLP Video Manager Debug: Videos table exists for create: ' . ($table_exists ? 'YES' : 'NO'));
+        
+        if (!$table_exists) {
+            error_log('VLP Video Manager Debug: Cannot create video - table does not exist');
+            return false;
+        }
+
         $defaults = array(
             'title' => '',
             'slug' => '',
