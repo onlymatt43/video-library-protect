@@ -61,6 +61,7 @@ class VLP_Bunny_Integration {
      */
     public function get_secure_stream_url($video_guid, $expiry = 10800, $is_preview = false) {
         if (!$this->is_enabled() || empty($video_guid)) {
+            error_log('VLP Bunny Debug: Integration not enabled or video_guid empty');
             return '';
         }
 
@@ -68,11 +69,18 @@ class VLP_Bunny_Integration {
         $drm_private_key = !empty($this->options['bunny_drm_private_key']) ? trim($this->options['bunny_drm_private_key']) : null;
         $cdn_hostname = !empty($this->options['bunny_cdn_hostname']) ? $this->options['bunny_cdn_hostname'] : "video.bunnycdn.com";
 
+        // Debug logging
+        error_log('VLP Bunny Debug: video_guid=' . $video_guid);
+        error_log('VLP Bunny Debug: library_id=' . $library_id);
+        error_log('VLP Bunny Debug: drm_private_key=' . ($drm_private_key ? 'SET' : 'EMPTY'));
+        error_log('VLP Bunny Debug: JWT class exists=' . (class_exists('Firebase\JWT\JWT') ? 'YES' : 'NO'));
+
         // Base URL for the HLS playlist
         $base_url = "https://{$cdn_hostname}/play/{$library_id}/{$video_guid}";
 
         // --- JWT DRM Authentication (Priority) ---
         if ($drm_private_key && class_exists('Firebase\JWT\JWT')) {
+            error_log('VLP Bunny Debug: Using JWT DRM authentication');
             try {
                 $expiration_time = time() + $expiry;
                 $payload = [
@@ -87,10 +95,14 @@ class VLP_Bunny_Integration {
                     $payload["preview"] = true;
                 }
 
+                error_log('VLP Bunny Debug: JWT payload: ' . json_encode($payload));
+
                 // Sign the token
                 $jwt = JWT::encode($payload, $drm_private_key, 'HS256');
+                $final_url = "{$base_url}/playlist.m3u8?token={$jwt}";
 
-                return "{$base_url}/playlist.m3u8?token={$jwt}";
+                error_log('VLP Bunny Debug: Generated JWT URL: ' . $final_url);
+                return $final_url;
 
             } catch (Exception $e) {
                 error_log('VLP Bunny DRM Error: Failed to generate JWT. ' . $e->getMessage());
@@ -100,11 +112,15 @@ class VLP_Bunny_Integration {
         }
 
         // --- Legacy Token Authentication (Fallback) ---
+        error_log('VLP Bunny Debug: Using legacy hash authentication');
         $api_key = $this->options['bunny_api_key'];
         $expires = time() + $expiry;
         $hash = hash('sha256', $library_id . $api_key . $expires . $video_guid);
-
-        return "{$base_url}/playlist.m3u8?token={$hash}&expires={$expires}";
+        
+        $legacy_url = "{$base_url}/playlist.m3u8?token={$hash}&expires={$expires}";
+        error_log('VLP Bunny Debug: Generated legacy URL: ' . $legacy_url);
+        
+        return $legacy_url;
     }
 
     /**
