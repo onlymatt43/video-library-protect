@@ -204,6 +204,15 @@ class VLP_Video_Manager {
     public function get_videos($args = array()) {
         global $wpdb;
 
+        // Debug: Check if table exists
+        $table_exists = $wpdb->get_var("SHOW TABLES LIKE '{$this->videos_table}'");
+        error_log('VLP Video Manager Debug: Table ' . $this->videos_table . ' exists: ' . ($table_exists ? 'YES' : 'NO'));
+        
+        if (!$table_exists) {
+            error_log('VLP Video Manager Debug: Videos table does not exist, returning empty array');
+            return array();
+        }
+
         $defaults = array(
             'category_id'       => array(),
             'category_slug'     => '',
@@ -247,6 +256,13 @@ class VLP_Video_Manager {
         );
 
         $videos = $wpdb->get_results($wpdb->prepare($sql, $where_values));
+
+        // Debug logging
+        error_log('VLP Video Manager Debug: SQL Query: ' . $wpdb->prepare($sql, $where_values));
+        error_log('VLP Video Manager Debug: Found ' . count($videos) . ' videos');
+        if ($wpdb->last_error) {
+            error_log('VLP Video Manager Debug: SQL Error: ' . $wpdb->last_error);
+        }
 
         foreach ($videos as $video) {
             if (!empty($video->protection_data)) {
