@@ -2,22 +2,22 @@
 /**
  * Plugin Name: Video Library Protect
  * Plugin URI: https://votresite.com/plugins/video-library-protect
- * Description: Une bibliothèque vidéo moderne avec système de protection flexible. Previews publics, vidéos complètes protégées par codes cadeaux au niveau vidéo, catégorie ou site entier.
- * Version: 1.0.0
- * Author: Votre Nom
- * Author URI: https://votresite.com
+ * Description: Un système de vidéothèque avancé pour WordPress avec une protection de contenu flexible via des codes cadeaux.
+ * Version: 2.0.0
+ * Author: Mathieu Courchesne
+ * Author URI: https://github.com/onlymatt43
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: video-library-protect
  * Domain Path: /languages
- * Requires at least: 5.0
- * Tested up to: 6.3
+ * Requires at least: 5.8
+ * Tested up to: 6.4
  * Requires PHP: 7.4
  * Network: false
  *
  * @package VideoLibraryProtect
- * @version 1.0.0
- * @since   1.0.0
+ * @version 2.0.0
+ * @since   2.0.0
  */
 
 // Prevent direct access
@@ -26,7 +26,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('VLP_VERSION', '1.0.0');
+define('VLP_VERSION', '2.0.0');
 define('VLP_PLUGIN_FILE', __FILE__);
 define('VLP_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('VLP_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -90,27 +90,25 @@ final class Video_Library_Protect {
      * Load plugin dependencies
      */
     private function load_dependencies() {
-        $required_files = array(
-            'includes/class-vlp-video-manager.php',
-            'includes/class-vlp-protection-manager.php',
-            'includes/class-vlp-bunny-integration.php',
-        );
+        // Core classes for activation and deactivation
+        $this->require_file('includes/class-vlp-activator.php');
+        $this->require_file('includes/class-vlp-deactivator.php');
 
-        foreach ($required_files as $relative_path) {
-            $this->require_file($relative_path);
-        }
+        // Core functional classes
+        $this->require_file('includes/class-vlp-video-manager.php');
+        $this->require_file('includes/class-vlp-protection-manager.php');
+        
+        // Integrations and public-facing classes
+        $this->require_file('includes/class-vlp-bunny-integration.php', false);
+        $this->require_file('includes/class-vlp-presto-integration.php', false);
+        $this->require_file('includes/class-vlp-analytics.php', false);
+        $this->require_file('public/class-vlp-public.php');
+        $this->require_file('public/class-vlp-shortcodes.php');
 
-        $optional_files = array(
-            'includes/class-vlp-presto-integration.php',
-            'includes/class-vlp-analytics.php',
-            'admin/class-vlp-admin.php',
-            'admin/class-vlp-video-admin.php',
-            'public/class-vlp-public.php',
-            'public/class-vlp-shortcodes.php',
-        );
-
-        foreach ($optional_files as $relative_path) {
-            $this->require_file($relative_path, false);
+        // Admin classes
+        if (is_admin()) {
+            $this->require_file('admin/class-vlp-admin.php');
+            $this->require_file('admin/class-vlp-video-admin.php');
         }
     }
 

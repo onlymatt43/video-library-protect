@@ -4,16 +4,17 @@
  *
  * This class defines all code necessary to run during the plugin's activation.
  *
- * @since      1.0.0
+ * @since      2.0.0
  * @package    Video_Library_Protect
  * @subpackage Video_Library_Protect/includes
+ * @author     Mathieu Courchesne <mathieu.courchesne@gmail.com>
  */
 class VLP_Activator {
 
     /**
      * Main activation method.
      *
-     * @since 1.0.0
+     * @since 2.0.0
      */
     public static function activate() {
         self::create_database_tables();
@@ -25,7 +26,7 @@ class VLP_Activator {
     /**
      * Create necessary database tables.
      *
-     * @since 1.0.0
+     * @since 2.0.0
      */
     private static function create_database_tables() {
         global $wpdb;
@@ -105,7 +106,7 @@ class VLP_Activator {
     /**
      * Set default plugin options.
      *
-     * @since 1.0.0
+     * @since 2.0.0
      */
     private static function set_default_options() {
         $default_options = [
@@ -123,7 +124,7 @@ class VLP_Activator {
     /**
      * Create necessary pages on activation.
      *
-     * @since 1.0.0
+     * @since 2.0.0
      */
     private static function create_pages() {
         $pages = [

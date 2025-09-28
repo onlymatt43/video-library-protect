@@ -6,7 +6,8 @@
  * other admin-oriented classes can focus on their specific concerns.
  *
  * @package VideoLibraryProtect
- * @since   1.0.0
+ * @since   2.0.0
+ * @author  Mathieu Courchesne <mathieu.courchesne@gmail.com>
  */
 
 if (!defined('ABSPATH')) {
