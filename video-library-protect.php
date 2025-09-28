@@ -372,6 +372,13 @@ require_once VLP_PLUGIN_DIR . 'includes/class-vlp-activator.php';
 require_once VLP_PLUGIN_DIR . 'includes/class-vlp-deactivator.php';
 
 /**
+ * System diagnostic utilities
+ */
+if (is_admin()) {
+    require_once VLP_PLUGIN_DIR . 'includes/class-vlp-diagnostic.php';
+}
+
+/**
  * Initialize the plugin
  */
 function vlp_init() {
