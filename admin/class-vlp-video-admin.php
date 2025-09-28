@@ -651,6 +651,19 @@ class VLP_Video_Admin {
                         </td>
                     </tr>
 
+                    <tr>
+                        <th scope="row"><?php _e('Clé privée de signature DRM', 'video-library-protect'); ?></th>
+                        <td>
+                            <textarea name="bunny_drm_private_key" 
+                                     rows="4" 
+                                     cols="50" 
+                                     class="large-text code"><?php echo esc_textarea($settings['bunny_drm_private_key'] ?? ''); ?></textarea>
+                            <p class="description">
+                                <?php _e('Copiez la clé privée depuis la section DRM de votre vidéothèque Bunny.net pour activer l\'authentification JWT.', 'video-library-protect'); ?>
+                            </p>
+                        </td>
+                    </tr>
+
                     <!-- Protection Settings -->
                     <tr>
                         <th colspan="2"><h2>🔒 <?php _e('Protection du Site', 'video-library-protect'); ?></h2></th>
@@ -805,6 +818,7 @@ class VLP_Video_Admin {
             'bunny_api_key' => sanitize_text_field($_POST['bunny_api_key']),
             'bunny_cdn_hostname' => sanitize_text_field($_POST['bunny_cdn_hostname']),
             'bunny_security_key' => sanitize_text_field($_POST['bunny_security_key']),
+            'bunny_drm_private_key' => sanitize_textarea_field($_POST['bunny_drm_private_key']),
             'site_wide_protection' => !empty($_POST['site_wide_protection']),
             'site_protection_codes' => array_map('trim', explode(',', $_POST['site_protection_codes'])),
             'giftcode_integration' => !empty($_POST['giftcode_integration']),

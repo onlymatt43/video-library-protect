@@ -1,38 +1,36 @@
 <?php
 /**
- * Bunny.net Integration Class
+ * Bunny.net Stream Integration
  *
- * Handles Bunny CDN and Bunny Stream integration for secure video delivery
+ * Handles video uploads to Bunny.net Stream and generates secure URLs
+ * for protected content, including modern JWT for DRM.
  *
  * @package VideoLibraryProtect
- * @since   1.0.0
+ * @since   2.0.0
+ * @author  Mathieu Courchesne <mathieu.courchesne@gmail.com>
  */
 
 if (!defined('ABSPATH')) {
     exit;
 }
 
+// Load JWT library
+if (file_exists(VLP_PLUGIN_DIR . 'includes/vendor/firebase/php-jwt/src/JWT.php')) {
+    require_once VLP_PLUGIN_DIR . 'includes/vendor/firebase/php-jwt/src/JWT.php';
+    require_once VLP_PLUGIN_DIR . 'includes/vendor/firebase/php-jwt/src/Key.php';
+    require_once VLP_PLUGIN_DIR . 'includes/vendor/firebase/php-jwt/src/BeforeValidException.php';
+    require_once VLP_PLUGIN_DIR . 'includes/vendor/firebase/php-jwt/src/ExpiredException.php';
+    require_once VLP_PLUGIN_DIR . 'includes/vendor/firebase/php-jwt/src/SignatureInvalidException.php';
+}
+
+use Firebase\JWT\JWT;
+use Firebase\JWT\Key;
+
 class VLP_Bunny_Integration {
 
-    /**
-     * Instance of this class
-     *
-     * @var VLP_Bunny_Integration
-     */
     private static $instance = null;
+    private $options = [];
 
-    /**
-     * Bunny settings
-     */
-    private $settings;
-    private $library_id;
-    private $api_key;
-    private $cdn_hostname;
-    private $security_key;
-
-    /**
-     * Get instance
-     */
     public static function get_instance() {
         if (null === self::$instance) {
             self::$instance = new self();
@@ -40,524 +38,231 @@ class VLP_Bunny_Integration {
         return self::$instance;
     }
 
-    /**
-     * Constructor
-     */
     private function __construct() {
-        $this->load_settings();
-        $this->init_hooks();
+        $this->options = get_option('vlp_settings', []);
     }
 
-    /**
-     * Load Bunny settings
-     */
-    private function load_settings() {
-        $vlp_settings = get_option('vlp_settings', array());
-        
-        $this->settings = array(
-            'enabled' => !empty($vlp_settings['bunny_stream_enabled']),
-            'library_id' => $vlp_settings['bunny_library_id'] ?? '',
-            'api_key' => $vlp_settings['bunny_api_key'] ?? '',
-            'cdn_hostname' => $vlp_settings['bunny_cdn_hostname'] ?? '',
-            'security_key' => $vlp_settings['bunny_security_key'] ?? ''
-        );
-
-        $this->library_id = $this->settings['library_id'];
-        $this->api_key = $this->settings['api_key'];
-        $this->cdn_hostname = $this->settings['cdn_hostname'];
-        $this->security_key = $this->settings['security_key'];
-    }
-
-    /**
-     * Initialize hooks
-     */
-    private function init_hooks() {
-        if (!$this->is_enabled()) {
-            return;
-        }
-
-        add_action('wp_ajax_vlp_upload_to_bunny', array($this, 'ajax_upload_to_bunny'));
-        add_action('wp_ajax_vlp_get_bunny_video_info', array($this, 'ajax_get_video_info'));
-        add_filter('vlp_video_stream_url', array($this, 'get_secure_stream_url'), 10, 3);
-    }
-
-    /**
-     * Check if Bunny integration is enabled
-     *
-     * @return bool
-     */
     public function is_enabled() {
-        return $this->settings['enabled'] && 
-               !empty($this->library_id) && 
-               !empty($this->api_key);
+        return !empty($this->options['bunny_stream_enabled']) && 
+               !empty($this->options['bunny_library_id']) && 
+               !empty($this->options['bunny_api_key']);
     }
 
     /**
-     * Upload video to Bunny Stream
+     * Generates a secure URL for a Bunny.net video.
      *
-     * @param string $file_path Local file path
-     * @param array $video_data Video metadata
-     * @return array Upload result
-     */
-    public function upload_video($file_path, $video_data = array()) {
-        if (!$this->is_enabled()) {
-            return array(
-                'success' => false,
-                'message' => 'Bunny Stream not configured'
-            );
-        }
-
-        try {
-            // Step 1: Create video entry in Bunny Stream
-            $video_guid = $this->create_bunny_video($video_data);
-            
-            if (!$video_guid) {
-                return array(
-                    'success' => false,
-                    'message' => 'Failed to create video in Bunny Stream'
-                );
-            }
-
-            // Step 2: Upload video file
-            $upload_result = $this->upload_video_file($video_guid, $file_path);
-            
-            if (!$upload_result) {
-                return array(
-                    'success' => false,
-                    'message' => 'Failed to upload video file'
-                );
-            }
-
-            // Step 3: Generate preview if needed
-            $preview_guid = null;
-            if (!empty($video_data['generate_preview'])) {
-                $preview_guid = $this->create_video_preview($video_guid, $video_data);
-            }
-
-            return array(
-                'success' => true,
-                'video_guid' => $video_guid,
-                'preview_guid' => $preview_guid,
-                'message' => 'Video uploaded successfully'
-            );
-
-        } catch (Exception $e) {
-            return array(
-                'success' => false,
-                'message' => 'Upload error: ' . $e->getMessage()
-            );
-        }
-    }
-
-    /**
-     * Create video entry in Bunny Stream
+     * It checks for a DRM key first to generate a JWT. If not present,
+     * it falls back to the legacy token authentication.
      *
-     * @param array $video_data Video metadata
-     * @return string|false Video GUID or false on failure
+     * @param string $video_guid The Bunny.net video GUID.
+     * @param int    $expiry     URL expiration time in seconds.
+     * @param bool   $is_preview Whether this is for a preview or full video.
+     * @return string The secure HLS playlist URL.
      */
-    private function create_bunny_video($video_data = array()) {
-        $url = "https://video.bunnycdn.com/library/{$this->library_id}/videos";
-        
-        $data = array(
-            'title' => $video_data['title'] ?? 'Untitled Video'
-        );
-
-        $response = wp_remote_post($url, array(
-            'headers' => array(
-                'AccessKey' => $this->api_key,
-                'Content-Type' => 'application/json'
-            ),
-            'body' => json_encode($data),
-            'timeout' => 30
-        ));
-
-        if (is_wp_error($response)) {
-            return false;
-        }
-
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-        
-        if (isset($body['guid'])) {
-            return $body['guid'];
-        }
-
-        return false;
-    }
-
-    /**
-     * Upload video file to Bunny Stream
-     *
-     * @param string $video_guid Video GUID
-     * @param string $file_path Local file path
-     * @return bool Success
-     */
-    private function upload_video_file($video_guid, $file_path) {
-        if (!file_exists($file_path)) {
-            return false;
-        }
-
-        $upload_url = "https://video.bunnycdn.com/library/{$this->library_id}/videos/{$video_guid}";
-        
-        $file_data = file_get_contents($file_path);
-
-        $response = wp_remote_request($upload_url, array(
-            'method' => 'PUT',
-            'headers' => array(
-                'AccessKey' => $this->api_key,
-                'Content-Type' => 'application/octet-stream'
-            ),
-            'body' => $file_data,
-            'timeout' => 300 // 5 minutes for large files
-        ));
-
-        return !is_wp_error($response);
-    }
-
-    /**
-     * Create video preview (shortened version)
-     *
-     * @param string $full_video_guid Full video GUID
-     * @param array $video_data Video metadata
-     * @return string|false Preview GUID or false
-     */
-    private function create_video_preview($full_video_guid, $video_data = array()) {
-        // Create a new video entry for preview
-        $preview_data = array(
-            'title' => ($video_data['title'] ?? 'Untitled') . ' - Preview'
-        );
-        
-        $preview_guid = $this->create_bunny_video($preview_data);
-        
-        if (!$preview_guid) {
-            return false;
-        }
-
-        // Use Bunny's video processing to create a shortened preview
-        // This would typically involve API calls to trim the video
-        $this->request_video_trimming($full_video_guid, $preview_guid, $video_data);
-        
-        return $preview_guid;
-    }
-
-    /**
-     * Request video trimming for preview
-     *
-     * @param string $source_guid Source video GUID
-     * @param string $preview_guid Preview video GUID
-     * @param array $video_data Video metadata
-     */
-    private function request_video_trimming($source_guid, $preview_guid, $video_data) {
-        $vlp_settings = get_option('vlp_settings', array());
-        $preview_duration = $vlp_settings['preview_duration'] ?? 30; // seconds
-
-        // Note: This is a simplified example. Actual implementation would depend on
-        // Bunny's video processing capabilities or external video processing service
-        
-        $processing_data = array(
-            'source_guid' => $source_guid,
-            'target_guid' => $preview_guid,
-            'start_time' => 0,
-            'end_time' => $preview_duration,
-            'add_watermark' => true,
-            'watermark_text' => 'PREVIEW'
-        );
-
-        // Store processing request for later handling
-        update_option('vlp_bunny_processing_queue', $processing_data);
-    }
-
-    /**
-     * Get secure video stream URL
-     *
-     * @param string $video_guid Video GUID
-     * @param int $expires_in Expiration time in seconds
-     * @param bool $is_preview Is preview video
-     * @return string Secure URL
-     */
-    public function get_secure_stream_url($video_guid, $expires_in = 3600, $is_preview = false) {
-        if (!$this->is_enabled()) {
+    public function get_secure_stream_url($video_guid, $expiry = 10800, $is_preview = false) {
+        if (!$this->is_enabled() || empty($video_guid)) {
             return '';
         }
 
-        if (empty($this->security_key)) {
-            // Return direct URL if no security key configured
-            return "https://{$this->cdn_hostname}/{$video_guid}/playlist.m3u8";
+        $library_id = $this->options['bunny_library_id'];
+        $drm_private_key = !empty($this->options['bunny_drm_private_key']) ? trim($this->options['bunny_drm_private_key']) : null;
+        $cdn_hostname = !empty($this->options['bunny_cdn_hostname']) ? $this->options['bunny_cdn_hostname'] : "video.bunnycdn.com";
+
+        // Base URL for the HLS playlist
+        $base_url = "https://{$cdn_hostname}/play/{$library_id}/{$video_guid}";
+
+        // --- JWT DRM Authentication (Priority) ---
+        if ($drm_private_key && class_exists('Firebase\JWT\JWT')) {
+            try {
+                $expiration_time = time() + $expiry;
+                $payload = [
+                    "vid" => $video_guid,
+                    "exp" => $expiration_time,
+                    "iat" => time() - 60, // Issued at time (60s tolerance)
+                    "lib" => $library_id,  // Library ID for additional validation
+                ];
+
+                // Add preview restriction if applicable
+                if ($is_preview) {
+                    $payload["preview"] = true;
+                }
+
+                // Sign the token
+                $jwt = JWT::encode($payload, $drm_private_key, 'HS256');
+
+                return "{$base_url}/playlist.m3u8?token={$jwt}";
+
+            } catch (Exception $e) {
+                error_log('VLP Bunny DRM Error: Failed to generate JWT. ' . $e->getMessage());
+                // Fallback to no token if JWT generation fails
+                return "{$base_url}/playlist.m3u8";
+            }
         }
 
-        $expires_timestamp = time() + $expires_in;
-        $path = "/{$video_guid}/playlist.m3u8";
-        
-        // Generate authentication token
-        $auth_string = $this->security_key . $path . $expires_timestamp;
-        $token = md5($auth_string);
-        
-        $secure_url = "https://{$this->cdn_hostname}{$path}?token={$token}&expires={$expires_timestamp}";
-        
-        // Add preview parameters if needed
-        if ($is_preview) {
-            $secure_url .= '&preview=1';
+        // --- Legacy Token Authentication (Fallback) ---
+        $api_key = $this->options['bunny_api_key'];
+        $expires = time() + $expiry;
+        $hash = hash('sha256', $library_id . $api_key . $expires . $video_guid);
+
+        return "{$base_url}/playlist.m3u8?token={$hash}&expires={$expires}";
+    }
+
+    /**
+     * Upload a video to Bunny Stream
+     *
+     * @param string $file_path Path to the video file
+     * @param string $title Video title
+     * @return array|WP_Error Upload result or error
+     */
+    public function upload_video($file_path, $title) {
+        if (!$this->is_enabled()) {
+            return new WP_Error('bunny_disabled', 'Bunny Stream integration is not enabled or configured.');
         }
 
-        return $secure_url;
+        if (!file_exists($file_path)) {
+            return new WP_Error('file_not_found', 'Video file not found.');
+        }
+
+        $library_id = $this->options['bunny_library_id'];
+        $api_key = $this->options['bunny_api_key'];
+
+        // Create video entry
+        $create_response = wp_remote_post("https://video.bunnycdn.com/library/{$library_id}/videos", [
+            'headers' => [
+                'AccessKey' => $api_key,
+                'Content-Type' => 'application/json',
+            ],
+            'body' => json_encode([
+                'title' => $title,
+            ]),
+            'timeout' => 30,
+        ]);
+
+        if (is_wp_error($create_response)) {
+            return $create_response;
+        }
+
+        $create_body = wp_remote_retrieve_body($create_response);
+        $create_data = json_decode($create_body, true);
+
+        if (!$create_data || !isset($create_data['guid'])) {
+            return new WP_Error('create_failed', 'Failed to create video entry on Bunny Stream.');
+        }
+
+        $video_guid = $create_data['guid'];
+
+        // Upload the actual video file
+        $upload_response = wp_remote_put("https://video.bunnycdn.com/library/{$library_id}/videos/{$video_guid}", [
+            'headers' => [
+                'AccessKey' => $api_key,
+            ],
+            'body' => file_get_contents($file_path),
+            'timeout' => 300, // 5 minutes for video upload
+        ]);
+
+        if (is_wp_error($upload_response)) {
+            return $upload_response;
+        }
+
+        $upload_code = wp_remote_retrieve_response_code($upload_response);
+
+        if ($upload_code !== 200) {
+            return new WP_Error('upload_failed', 'Failed to upload video to Bunny Stream.');
+        }
+
+        return [
+            'guid' => $video_guid,
+            'title' => $title,
+            'status' => 'uploaded',
+        ];
     }
 
     /**
      * Get video information from Bunny Stream
      *
      * @param string $video_guid Video GUID
-     * @return array|false Video info or false
+     * @return array|WP_Error Video information or error
      */
     public function get_video_info($video_guid) {
-        if (!$this->is_enabled()) {
-            return false;
+        if (!$this->is_enabled() || empty($video_guid)) {
+            return new WP_Error('invalid_params', 'Invalid parameters.');
         }
 
-        $url = "https://video.bunnycdn.com/library/{$this->library_id}/videos/{$video_guid}";
-        
-        $response = wp_remote_get($url, array(
-            'headers' => array(
-                'AccessKey' => $this->api_key
-            ),
-            'timeout' => 30
-        ));
+        $library_id = $this->options['bunny_library_id'];
+        $api_key = $this->options['bunny_api_key'];
+
+        $response = wp_remote_get("https://video.bunnycdn.com/library/{$library_id}/videos/{$video_guid}", [
+            'headers' => [
+                'AccessKey' => $api_key,
+            ],
+            'timeout' => 30,
+        ]);
 
         if (is_wp_error($response)) {
-            return false;
+            return $response;
         }
 
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-        
-        if ($body) {
-            return array(
-                'guid' => $body['guid'] ?? '',
-                'title' => $body['title'] ?? '',
-                'length' => $body['length'] ?? 0,
-                'status' => $body['status'] ?? 0, // 0=queued, 1=processing, 2=encoding, 3=finished, 4=failed
-                'thumbnail_url' => $body['thumbnailFileName'] ? 
-                    "https://{$this->cdn_hostname}/{$video_guid}/{$body['thumbnailFileName']}" : '',
-                'file_size' => $body['storageSize'] ?? 0,
-                'created_at' => $body['dateUploaded'] ?? '',
-                'resolutions' => $body['availableResolutions'] ?? array()
-            );
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+
+        if (!$data) {
+            return new WP_Error('api_error', 'Invalid response from Bunny Stream API.');
         }
 
-        return false;
+        return $data;
     }
 
     /**
-     * Delete video from Bunny Stream
+     * Delete a video from Bunny Stream
      *
      * @param string $video_guid Video GUID
-     * @return bool Success
+     * @return bool|WP_Error True on success, WP_Error on failure
      */
     public function delete_video($video_guid) {
-        if (!$this->is_enabled()) {
-            return false;
+        if (!$this->is_enabled() || empty($video_guid)) {
+            return new WP_Error('invalid_params', 'Invalid parameters.');
         }
 
-        $url = "https://video.bunnycdn.com/library/{$this->library_id}/videos/{$video_guid}";
-        
-        $response = wp_remote_request($url, array(
-            'method' => 'DELETE',
-            'headers' => array(
-                'AccessKey' => $this->api_key
-            ),
-            'timeout' => 30
-        ));
+        $library_id = $this->options['bunny_library_id'];
+        $api_key = $this->options['bunny_api_key'];
 
-        return !is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200;
+        $response = wp_remote_request("https://video.bunnycdn.com/library/{$library_id}/videos/{$video_guid}", [
+            'method' => 'DELETE',
+            'headers' => [
+                'AccessKey' => $api_key,
+            ],
+            'timeout' => 30,
+        ]);
+
+        if (is_wp_error($response)) {
+            return $response;
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+
+        if ($code === 200 || $code === 404) { // 404 means already deleted
+            return true;
+        }
+
+        return new WP_Error('delete_failed', 'Failed to delete video from Bunny Stream.');
     }
 
     /**
-     * Get video thumbnail URL
+     * Generate a thumbnail URL for a video
      *
      * @param string $video_guid Video GUID
-     * @param string $thumbnail_filename Thumbnail filename
+     * @param int    $width      Thumbnail width (optional)
+     * @param int    $height     Thumbnail height (optional)
      * @return string Thumbnail URL
      */
-    public function get_thumbnail_url($video_guid, $thumbnail_filename = '') {
-        if (empty($thumbnail_filename)) {
-            $thumbnail_filename = 'thumbnail.jpg';
+    public function get_thumbnail_url($video_guid, $width = 1280, $height = 720) {
+        if (!$this->is_enabled() || empty($video_guid)) {
+            return '';
         }
 
-        return "https://{$this->cdn_hostname}/{$video_guid}/{$thumbnail_filename}";
-    }
+        $library_id = $this->options['bunny_library_id'];
+        $cdn_hostname = !empty($this->options['bunny_cdn_hostname']) ? $this->options['bunny_cdn_hostname'] : "video.bunnycdn.com";
 
-    /**
-     * Generate signed URL for file uploads
-     *
-     * @param string $path File path
-     * @param int $expires_in Expiration in seconds
-     * @return string Signed URL
-     */
-    public function generate_signed_upload_url($path, $expires_in = 3600) {
-        if (empty($this->security_key)) {
-            return "https://{$this->cdn_hostname}{$path}";
-        }
-
-        $expires_timestamp = time() + $expires_in;
-        $auth_string = $this->security_key . $path . $expires_timestamp;
-        $token = md5($auth_string);
-        
-        return "https://{$this->cdn_hostname}{$path}?token={$token}&expires={$expires_timestamp}";
-    }
-
-    /**
-     * AJAX handler for video upload
-     */
-    public function ajax_upload_to_bunny() {
-        check_ajax_referer('vlp_admin_nonce', 'nonce');
-        
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(array('message' => 'Insufficient permissions'));
-        }
-
-        $file_path = sanitize_text_field($_POST['file_path'] ?? '');
-        $video_title = sanitize_text_field($_POST['video_title'] ?? '');
-        
-        if (empty($file_path) || !file_exists($file_path)) {
-            wp_send_json_error(array('message' => 'Invalid file path'));
-        }
-
-        $video_data = array(
-            'title' => $video_title,
-            'generate_preview' => !empty($_POST['generate_preview'])
-        );
-
-        $result = $this->upload_video($file_path, $video_data);
-        
-        if ($result['success']) {
-            wp_send_json_success($result);
-        } else {
-            wp_send_json_error($result);
-        }
-    }
-
-    /**
-     * AJAX handler for video info retrieval
-     */
-    public function ajax_get_video_info() {
-        check_ajax_referer('vlp_ajax_nonce', 'nonce');
-        
-        $video_guid = sanitize_text_field($_POST['video_guid'] ?? '');
-        
-        if (empty($video_guid)) {
-            wp_send_json_error(array('message' => 'Video GUID required'));
-        }
-
-        $video_info = $this->get_video_info($video_guid);
-        
-        if ($video_info) {
-            wp_send_json_success($video_info);
-        } else {
-            wp_send_json_error(array('message' => 'Failed to retrieve video info'));
-        }
-    }
-
-    /**
-     * Check if video is ready for streaming
-     *
-     * @param string $video_guid Video GUID
-     * @return bool
-     */
-    public function is_video_ready($video_guid) {
-        $info = $this->get_video_info($video_guid);
-        return $info && $info['status'] === 3; // 3 = finished encoding
-    }
-
-    /**
-     * Get available video resolutions
-     *
-     * @param string $video_guid Video GUID
-     * @return array Available resolutions
-     */
-    public function get_video_resolutions($video_guid) {
-        $info = $this->get_video_info($video_guid);
-        return $info ? $info['resolutions'] : array();
-    }
-
-    /**
-     * Webhook handler for Bunny Stream processing updates
-     *
-     * @param array $webhook_data Webhook payload
-     */
-    public function handle_processing_webhook($webhook_data) {
-        $video_guid = $webhook_data['VideoGuid'] ?? '';
-        $status = $webhook_data['Status'] ?? '';
-        
-        if (empty($video_guid)) {
-            return;
-        }
-
-        // Find video in database
-        global $wpdb;
-        $videos_table = $wpdb->prefix . 'vlp_videos';
-        
-        $video = $wpdb->get_row($wpdb->prepare(
-            "SELECT * FROM {$videos_table} WHERE bunny_full_guid = %s OR bunny_preview_guid = %s",
-            $video_guid, $video_guid
-        ));
-
-        if (!$video) {
-            return;
-        }
-
-        // Update video status based on Bunny webhook
-        switch ($status) {
-            case 3: // Finished
-                $this->on_video_processing_complete($video, $video_guid);
-                break;
-            case 4: // Failed
-                $this->on_video_processing_failed($video, $video_guid);
-                break;
-        }
-    }
-
-    /**
-     * Handle successful video processing
-     *
-     * @param object $video Video record
-     * @param string $video_guid Video GUID
-     */
-    private function on_video_processing_complete($video, $video_guid) {
-        // Update video info with Bunny data
-        $bunny_info = $this->get_video_info($video_guid);
-        
-        if ($bunny_info) {
-            global $wpdb;
-            $videos_table = $wpdb->prefix . 'vlp_videos';
-            
-            $update_data = array(
-                'duration' => $bunny_info['length'],
-                'file_size' => $bunny_info['file_size']
-            );
-
-            if ($bunny_info['thumbnail_url']) {
-                $update_data['thumbnail_url'] = $bunny_info['thumbnail_url'];
-            }
-
-            $wpdb->update(
-                $videos_table,
-                $update_data,
-                array('id' => $video->id),
-                null,
-                array('%d')
-            );
-        }
-
-        // Send notification if needed
-        do_action('vlp_video_processing_complete', $video, $video_guid);
-    }
-
-    /**
-     * Handle failed video processing
-     *
-     * @param object $video Video record
-     * @param string $video_guid Video GUID
-     */
-    private function on_video_processing_failed($video, $video_guid) {
-        // Log error and notify
-        error_log("VLP: Video processing failed for GUID: {$video_guid}");
-        do_action('vlp_video_processing_failed', $video, $video_guid);
+        return "https://{$cdn_hostname}/{$library_id}/{$video_guid}/thumbnail.jpg?width={$width}&height={$height}";
     }
 }
